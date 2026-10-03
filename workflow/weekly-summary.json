@@ -1,0 +1,164 @@
+{
+  "name": "Weekly GitHub Summary",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": [
+          {
+            "mode": "everyWeek",
+            "weekDays": ["friday"],
+            "hours": [17],
+            "minutes": [0]
+          }
+        ]
+      },
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "commits",
+        "repository": "={{ $githubRepo }}",
+        "since": "={{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }}",
+        "until": "={{ new Date().toISOString() }}",
+        "options": {}
+      },
+      "name": "Get Commits",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 2,
+      "position": [450, 200],
+      "credentials": {
+        "githubApi": "GitHub API"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "issues",
+        "repository": "={{ $githubRepo }}",
+        "state": "closed",
+        "since": "={{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }}",
+        "until": "={{ new Date().toISOString() }}",
+        "options": {}
+      },
+      "name": "Get Closed Issues",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 2,
+      "position": [450, 350],
+      "credentials": {
+        "githubApi": "GitHub API"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pull_requests",
+        "repository": "={{ $githubRepo }}",
+        "state": "closed",
+        "since": "={{ new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }}",
+        "until": "={{ new Date().toISOString() }}",
+        "options": {}
+      },
+      "name": "Get Merged PRs",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 2,
+      "position": [450, 500],
+      "credentials": {
+        "githubApi": "GitHub API"
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Combine data from the three GitHub nodes\nconst commits = items[0].json;\nconst issues = items[1].json;\nconst prs = items[2].json;\n\n// Format for Claude prompt\nlet prompt = `Generate a weekly narrative summary for the GitHub repository ${{ $githubRepo }}.\n\nHere is the activity from the past week:\n\nCommits (${commits.length}):\n`;\ncommits.forEach((c, i) => {\n  prompt += `- ${c.commit.message.split('\\n')[0]} (by ${c.commit.author.name})\\n`;\n});\nprompt += `\\nClosed Issues (${issues.length}):\\n`;\nissues.forEach((i, idx) => {\n  prompt += `- ${i.title} (by ${i.user.login})\\n`;\n});\nprompt += `\\nMerged Pull Requests (${prs.length}):\\n`;\nprs.forEach((pr, idx) => {\n  prompt += `- ${pr.title} (by ${pr.user.login})\\n`;\n});\nprompt += `\\nPlease write a concise, engaging summary suitable for a team update or newsletter.`;\n\nreturn [{ json: { prompt: prompt } }];"
+      },
+      "name": "Format Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [650, 350]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "headerParametersUi": {
+          "parameter": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "x-api-key", "value": "{{ $claudeApiKey }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            { "name": "model", "value": "claude-sonnet-4-20250514" },
+            { "name": "max_tokens", "value": 1000 },
+            { "name": "messages", "value": "={{ [ { role: \"user\", content: $json.prompt } ] }}" }
+          ]
+        },
+        "options": {
+          "jsonParameters": true
+        }
+      },
+      "name": "Call Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [850, 350],
+      "credentials": {
+        "httpHeaderAuth": "Claude API"
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "{{ $senderEmail }}",
+        "toEmail": "{{ $recipientEmail }}",
+        "subject": "Weekly GitHub Report: {{$githubRepo}}",
+        "text": "={{ $json.content[0].text }}"
+      },
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1050, 350],
+      "credentials": {
+        "emailSMTP": "Email SMTP"
+      }
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          { "node": "Get Commits", "type": "main", "index": 0 },
+          { "node": "Get Closed Issues", "type": "main", "index": 0 },
+          { "node": "Get Merged PRs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Commits": {
+      "main": [
+        [ { "node": "Format Prompt", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Get Closed Issues": {
+      "main": [
+        [ { "node": "Format Prompt", "type": "main", "index": 1 } ]
+      ]
+    },
+    "Get Merged PRs": {
+      "main": [
+        [ { "node": "Format Prompt", "type": "main", "index": 2 } ]
+      ]
+    },
+    "Format Prompt": {
+      "main": [
+        [ { "node": "Call Claude API", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Call Claude API": {
+      "main": [
+        [ { "node": "Send Email", "type": "main", "index": 0 } ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "id": "1"
+}
